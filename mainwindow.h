@@ -55,7 +55,17 @@ private:
     cv::Mat originalCapturedImage;  // Store the clean original image
     void suggestHSVValues();
     void captureImage();
+    void streamVideo();
     void updateHSVValues();
+    void changeMode();
+
+    QTimer *streamTimer;
+    QNetworkAccessManager *manager;  // For repeated GET requests
+
+    // Helper method to fetch a single frame
+    void fetchStreamFrame();
+
+    QAction *streamAction = nullptr;  // We'll store the toolbar action here
 
 
     QWidget *centralWidget;
@@ -82,8 +92,13 @@ private:
     bool imageLoaded;
     bool imageOpened = false;
     bool hasShownConnectionError = false;
+    bool isStreaming = false;
+    bool streamRaw = true;
+
+    QString mode = "stream";
 
     QString url = "http://10.42.0.1:8080";
+    // QString url = "http://192.168.10.115:8080";
 };
 
 #endif // MAINWINDOW_H

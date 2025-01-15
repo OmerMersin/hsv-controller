@@ -5,6 +5,12 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), imageLoaded(false)  // Initialize streaming to true
 {
     createUI();
+
+    manager = new QNetworkAccessManager(this);
+    streamTimer = new QTimer(this);
+
+    // Whenever the timer times out, fetch a single frame
+    connect(streamTimer, &QTimer::timeout, this, &MainWindow::fetchStreamFrame);
 }
 
 
@@ -119,6 +125,14 @@ void MainWindow::createUI()
     QToolBar *toolbar = addToolBar("Main Toolbar");
     QAction *openAction = toolbar->addAction("Open");
     connect(openAction, &QAction::triggered, this, &MainWindow::openImage);
+
+    // Stream from Raspberry
+    streamAction = toolbar->addAction("Stream Video");
+    connect(streamAction, &QAction::triggered, this, &MainWindow::streamVideo);
+
+    // Change mode of stream
+    QAction *changeModeAction = toolbar->addAction("Change Stream Mode");
+    connect(changeModeAction, &QAction::triggered, this, &MainWindow::changeMode);
 
     // Capture from Raspberry
     QAction *CaptureImage = toolbar->addAction("Capture Image");
@@ -377,10 +391,19 @@ void MainWindow::suggestHSVValues()
 
 void MainWindow::captureImage()
 {
+    if (isStreaming)
+    {
+        // Stop streaming
+        isStreaming = false;
+        streamTimer->stop();   // Stop the timer
+        streamAction->setText("Stream Video");
+        qDebug() << "Streaming stopped.";
+    }
+
     QString fileName = "capture.jpg";
 
     // Ensure the URL is valid
-    QUrl imageUrl(url);
+    QUrl imageUrl(url + "/capture");
     if (!imageUrl.isValid())
     {
         QMessageBox::warning(this, "Error", "Invalid URL specified.");
@@ -388,14 +411,14 @@ void MainWindow::captureImage()
     }
 
     // Create network manager and request
-    QNetworkAccessManager manager;
-    QNetworkRequest request(imageUrl); // Properly construct QNetworkRequest with QUrl
-    QNetworkReply *reply = manager.get(request); // Correct usage of manager.get()
+    QNetworkAccessManager *manager = new QNetworkAccessManager(this);
+    QNetworkRequest request(imageUrl);
+    QNetworkReply *reply = manager->get(request);
 
     // Use an event loop to wait for the reply
     QEventLoop loop;
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec(); // Wait until the request is complete
+    loop.exec();
 
     if (reply->error() == QNetworkReply::NoError)
     {
@@ -410,7 +433,7 @@ void MainWindow::captureImage()
             cv::Mat capturedImage = cv::imread(fileName.toStdString());
             if (!capturedImage.empty())
             {
-                originalImage = capturedImage.clone(); // Save the captured image for further processing
+                originalImage = capturedImage.clone();
                 originalCapturedImage = originalImage.clone();
                 imageOpened = true;
 
@@ -490,4 +513,84 @@ void MainWindow::updateHSVValues()
         reply->deleteLater();
     });
 }
+
+void MainWindow::streamVideo()
+{
+    if (!streamAction)
+    {
+        qDebug() << "Error: Action not found.";
+        return;
+    }
+
+    // Toggle streaming state
+    if (isStreaming)
+    {
+        // Stop streaming
+        isStreaming = false;
+        streamTimer->stop();   // Stop the timer
+        streamAction->setText("Stream Video");
+        qDebug() << "Streaming stopped.";
+    }
+    else
+    {
+        // Start streaming
+        isStreaming = true;
+        streamAction->setText("Stop Video");
+        qDebug() << "Streaming started.";
+
+        // Start the timer to fetch frames every 100 ms
+        streamTimer->start(33);
+    }
+}
+
+
+void MainWindow::fetchStreamFrame()
+{
+    if (!isStreaming) {
+        return;  // Just in case
+    }
+
+    if (streamRaw)
+        mode = "/stream";
+    else
+        mode = "/stream_final";
+
+    // Build the URL (the server should return one JPEG per request)
+    QUrl streamUrl(url + mode);
+    if (!streamUrl.isValid()) {
+        qDebug() << "Invalid stream URL";
+        return;
+    }
+
+    QNetworkRequest request(streamUrl);
+    QNetworkReply *reply = manager->get(request);
+
+    // When finished downloading, decode and display
+    connect(reply, &QNetworkReply::finished, this, [=]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray frameData = reply->readAll();
+
+            // Decode the JPEG frame
+            QImage frameImage = QImage::fromData(frameData, "JPEG");
+
+            if (!frameImage.isNull()) {
+                imageLabel->setPixmap(QPixmap::fromImage(frameImage.scaled(
+                    imageLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+            }
+        } else {
+            qDebug() << "Error fetching frame:" << reply->errorString();
+        }
+        reply->deleteLater();
+    });
+}
+
+void MainWindow::changeMode()
+{
+    if (streamRaw) {
+        streamRaw = false;
+    }
+    else
+        streamRaw = true;
+}
+
 
